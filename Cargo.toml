@@ -1,0 +1,33 @@
+[package]
+name = "legume-genomic-types"
+version = "0.4.1"
+edition = "2021"
+rust-version = "1.91"
+license = "MIT"
+authors = ["Yongjin Park <ypp@stat.ubc.ca> <yongjin.park@ubc.ca>"]
+description = "Shared genomic types and parsers (GFF/GTF, BED, SAM utilities) for legume tools"
+repository = "https://github.com/causalpathlab/legume-genomic-types"
+homepage = "https://github.com/causalpathlab/legume-genomic-types"
+readme = "README.md"
+keywords = ["genomics", "gff", "bed", "sam", "transcript"]
+categories = ["science", "parsing"]
+exclude = [
+    "**/.claude/**",
+    "**/.DS_Store",
+]
+
+[lib]
+name = "genomic_data"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0"
+dashmap = { version = "6.1.0", features = ["rayon"] }
+log = "0.4"
+rustc-hash = "2.1"
+rayon = "1.10.0"
+nalgebra = "0.34"
+legume-numeric = { version = "0.8.10", features = ["matrix"] }
+
+[dev-dependencies]
+tempfile = "3.2"
