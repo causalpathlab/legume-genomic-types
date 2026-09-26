@@ -9,6 +9,82 @@ pub fn parse_ensembl_id(ensembl_name: &str) -> Option<&str> {
     ensembl_name.split('.').next()
 }
 
+/// `ENS[A-Z]*G` followed by digits: a bare Ensembl gene id.
+pub fn is_ensembl_gene_id(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("ENS") else {
+        return false;
+    };
+    let letters = rest.bytes().take_while(u8::is_ascii_uppercase).count();
+    let (species, digits) = rest.split_at(letters);
+    species.ends_with('G') && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Drop the version of a leading Ensembl gene id, keeping whatever follows
+/// it: `ENSG00000141510.17` → `ENSG00000141510`,
+/// `ENSG00000141510.17_TP53` → `ENSG00000141510_TP53`. GENCODE's `_PAR_Y`
+/// copy tag is dropped too, so the pseudo-autosomal copy merges with its
+/// gene instead of being cut down to `Y` by the `_` rule. Other names are
+/// returned as given.
+pub fn strip_ensembl_version(name: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    let base = match name.strip_suffix("_PAR_Y") {
+        Some(b) if b.starts_with("ENS") => b,
+        _ => name,
+    };
+    let Some((id, rest)) = base.split_once('.') else {
+        return Cow::Borrowed(base);
+    };
+    if !is_ensembl_gene_id(id) {
+        return Cow::Borrowed(name);
+    }
+    let n_ver = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if n_ver == 0 {
+        return Cow::Borrowed(name);
+    }
+    let tail = &rest[n_ver..];
+    if tail.is_empty() {
+        Cow::Borrowed(id)
+    } else {
+        Cow::Owned(format!("{id}{tail}"))
+    }
+}
+
+/// Ensembl gene id → HGNC symbol from the `gene` rows of a GFF/GTF, ids
+/// version-stripped (`ENSG00000141510.17` → `ENSG00000141510`). Streams the
+/// file and parses only `gene` rows, so a full GENCODE annotation costs one
+/// pass. A gene without a `gene_name` is left out; the first symbol seen
+/// for an id wins.
+pub fn load_ensembl_symbol_map(
+    gff_file: &str,
+) -> anyhow::Result<rustc_hash::FxHashMap<Box<str>, Box<str>>> {
+    use std::io::BufRead;
+    let reader = legume_numeric::matrix::common_io::open_buf_reader(gff_file)
+        .map_err(|e| anyhow::anyhow!("opening {gff_file}: {e}"))?;
+    let mut map: rustc_hash::FxHashMap<Box<str>, Box<str>> = Default::default();
+    for line in reader.lines() {
+        let line = line?;
+        if line.starts_with('#') {
+            continue;
+        }
+        let mut cols = line.splitn(9, '\t');
+        if cols.nth(2) != Some("gene") {
+            continue;
+        }
+        let words: Vec<Box<str>> = line.split('\t').map(Box::from).collect();
+        let Some(rec) = parse_gff(words) else {
+            continue;
+        };
+        if let (GeneId::Ensembl(id), GeneSymbol::Symbol(sym)) = (rec.gene_id, rec.gene_name) {
+            map.entry(id).or_insert(sym);
+        }
+    }
+    log::info!(
+        "Loaded {} Ensembl id → symbol pairs from {gff_file}",
+        map.len()
+    );
+    Ok(map)
+}
+
 /// Gff record mapping a gene to one record
 pub struct GffRecordMap {
     records: HashMap<GeneId, GffRecord>,
@@ -563,6 +639,49 @@ mod tests {
 
         let rec = parse_gff(words).expect("a well-formed gene line parses");
         assert_eq!(rec.transcript_id, TranscriptId::Missing);
+    }
+
+    #[test]
+    fn ensembl_versions_are_stripped_and_nothing_else_is() {
+        assert_eq!(
+            strip_ensembl_version("ENSG00000141510.17"),
+            "ENSG00000141510"
+        );
+        assert_eq!(
+            strip_ensembl_version("ENSG00000141510.17_TP53"),
+            "ENSG00000141510_TP53"
+        );
+        assert_eq!(
+            strip_ensembl_version("ENSG00000182378.14_PAR_Y"),
+            "ENSG00000182378"
+        );
+        assert_eq!(
+            strip_ensembl_version("ENSMUSG00000059552.13"),
+            "ENSMUSG00000059552"
+        );
+        assert_eq!(strip_ensembl_version("TP53"), "TP53");
+        assert_eq!(strip_ensembl_version("HLA-A.1"), "HLA-A.1");
+        assert_eq!(
+            strip_ensembl_version("ENST00000269305.9"),
+            "ENST00000269305.9"
+        );
+        assert_eq!(strip_ensembl_version("FOO_PAR_Y"), "FOO_PAR_Y");
+        assert!(is_ensembl_gene_id("ENSG00000141510"));
+        assert!(!is_ensembl_gene_id("ENST00000269305"));
+    }
+
+    #[test]
+    fn the_symbol_map_reads_gene_rows_and_strips_the_version() {
+        let gtf = "##gff\n\
+chr17\tHAVANA\tgene\t7661779\t7687538\t.\t-\t.\tgene_id \"ENSG00000141510.17\"; gene_type \"protein_coding\"; gene_name \"TP53\";\n\
+chr17\tHAVANA\texon\t7661779\t7662000\t.\t-\t.\tgene_id \"ENSG00000141510.17\"; gene_name \"WRONG\";\n\
+chr1\tHAVANA\tgene\t1\t2\t.\t+\t.\tgene_id \"ENSG00000000001.1\";\n";
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.gtf");
+        std::fs::write(&p, gtf).unwrap();
+        let m = load_ensembl_symbol_map(p.to_str().unwrap()).unwrap();
+        assert_eq!(m.len(), 1, "a gene without a symbol is left out");
+        assert_eq!(m.get("ENSG00000141510").map(AsRef::as_ref), Some("TP53"));
     }
 
     #[test]
