@@ -20,8 +20,8 @@ pub fn is_ensembl_gene_id(name: &str) -> bool {
 }
 
 /// Drop the version of a leading Ensembl gene id, keeping whatever follows
-/// it: `ENSG00000141510.17` → `ENSG00000141510`,
-/// `ENSG00000141510.17_TP53` → `ENSG00000141510_TP53`. GENCODE's `_PAR_Y`
+/// it: `ENSG00000000001.17` → `ENSG00000000001`,
+/// `ENSG00000000001.17_GENE1` → `ENSG00000000001_GENE1`. GENCODE's `_PAR_Y`
 /// copy tag is dropped too, so the pseudo-autosomal copy merges with its
 /// gene instead of being cut down to `Y` by the `_` rule. Other names are
 /// returned as given.
@@ -50,7 +50,7 @@ pub fn strip_ensembl_version(name: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Ensembl gene id → HGNC symbol from the `gene` rows of a GFF/GTF, ids
-/// version-stripped (`ENSG00000141510.17` → `ENSG00000141510`). Streams the
+/// version-stripped (`ENSG00000000001.17` → `ENSG00000000001`). Streams the
 /// file and parses only `gene` rows, so a full GENCODE annotation costs one
 /// pass. A gene without a `gene_name` is left out; the first symbol seen
 /// for an id wins.
@@ -603,9 +603,9 @@ mod tests {
     /// the same way `gene_id` strips it.
     #[test]
     fn transcript_id_survives_parsing() {
-        let attrs = "gene_id \"ENSG00000186092.7\"; transcript_id \"ENST00000641515.2\"; \
-                     gene_type \"protein_coding\"; gene_name \"OR4F5\"; \
-                     transcript_type \"protein_coding\"; transcript_name \"OR4F5-201\"; \
+        let attrs = "gene_id \"ENSG00000000002.7\"; transcript_id \"ENST00000000001.2\"; \
+                     gene_type \"protein_coding\"; gene_name \"GENE2\"; \
+                     transcript_type \"protein_coding\"; transcript_name \"GENE2-201\"; \
                      exon_number 2;";
         let words: Vec<Box<str>> = [
             "chr1", "HAVANA", "CDS", "65565", "65573", ".", "+", "0", attrs,
@@ -617,10 +617,10 @@ mod tests {
         let rec = parse_gff(words).expect("a well-formed CDS line parses");
         assert_eq!(
             rec.transcript_id,
-            TranscriptId::Ensembl("ENST00000641515".into())
+            TranscriptId::Ensembl("ENST00000000001".into())
         );
         // …and the fields that were already parsed are untouched.
-        assert_eq!(rec.gene_id, GeneId::Ensembl("ENSG00000186092".into()));
+        assert_eq!(rec.gene_id, GeneId::Ensembl("ENSG00000000002".into()));
         assert_eq!(rec.gene_type, GeneType::CodingGene);
         assert_eq!(rec.feature_type, FeatureType::CDS);
     }
@@ -628,8 +628,8 @@ mod tests {
     /// A `gene` row carries no transcript, and must not borrow one.
     #[test]
     fn a_gene_row_has_no_transcript_id() {
-        let attrs = "gene_id \"ENSG00000186092.7\"; gene_type \"protein_coding\"; \
-                     gene_name \"OR4F5\";";
+        let attrs = "gene_id \"ENSG00000000002.7\"; gene_type \"protein_coding\"; \
+                     gene_name \"GENE2\";";
         let words: Vec<Box<str>> = [
             "chr1", "HAVANA", "gene", "65419", "71585", ".", "+", ".", attrs,
         ]
@@ -644,44 +644,44 @@ mod tests {
     #[test]
     fn ensembl_versions_are_stripped_and_nothing_else_is() {
         assert_eq!(
-            strip_ensembl_version("ENSG00000141510.17"),
-            "ENSG00000141510"
+            strip_ensembl_version("ENSG00000000001.17"),
+            "ENSG00000000001"
         );
         assert_eq!(
-            strip_ensembl_version("ENSG00000141510.17_TP53"),
-            "ENSG00000141510_TP53"
+            strip_ensembl_version("ENSG00000000001.17_GENE1"),
+            "ENSG00000000001_GENE1"
         );
         assert_eq!(
-            strip_ensembl_version("ENSG00000182378.14_PAR_Y"),
-            "ENSG00000182378"
+            strip_ensembl_version("ENSG00000000003.14_PAR_Y"),
+            "ENSG00000000003"
         );
         assert_eq!(
-            strip_ensembl_version("ENSMUSG00000059552.13"),
-            "ENSMUSG00000059552"
+            strip_ensembl_version("ENSMUSG00000000001.13"),
+            "ENSMUSG00000000001"
         );
-        assert_eq!(strip_ensembl_version("TP53"), "TP53");
+        assert_eq!(strip_ensembl_version("GENE1"), "GENE1");
         assert_eq!(strip_ensembl_version("GENE1-A.1"), "GENE1-A.1");
         assert_eq!(
-            strip_ensembl_version("ENST00000269305.9"),
-            "ENST00000269305.9"
+            strip_ensembl_version("ENST00000000002.9"),
+            "ENST00000000002.9"
         );
         assert_eq!(strip_ensembl_version("FOO_PAR_Y"), "FOO_PAR_Y");
-        assert!(is_ensembl_gene_id("ENSG00000141510"));
-        assert!(!is_ensembl_gene_id("ENST00000269305"));
+        assert!(is_ensembl_gene_id("ENSG00000000001"));
+        assert!(!is_ensembl_gene_id("ENST00000000002"));
     }
 
     #[test]
     fn the_symbol_map_reads_gene_rows_and_strips_the_version() {
         let gtf = "##gff\n\
-chr17\tHAVANA\tgene\t7661779\t7687538\t.\t-\t.\tgene_id \"ENSG00000141510.17\"; gene_type \"protein_coding\"; gene_name \"TP53\";\n\
-chr17\tHAVANA\texon\t7661779\t7662000\t.\t-\t.\tgene_id \"ENSG00000141510.17\"; gene_name \"WRONG\";\n\
+chr17\tHAVANA\tgene\t7661779\t7687538\t.\t-\t.\tgene_id \"ENSG00000000001.17\"; gene_type \"protein_coding\"; gene_name \"GENE1\";\n\
+chr17\tHAVANA\texon\t7661779\t7662000\t.\t-\t.\tgene_id \"ENSG00000000001.17\"; gene_name \"WRONG\";\n\
 chr1\tHAVANA\tgene\t1\t2\t.\t+\t.\tgene_id \"ENSG00000000001.1\";\n";
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("a.gtf");
         std::fs::write(&p, gtf).unwrap();
         let m = load_ensembl_symbol_map(p.to_str().unwrap()).unwrap();
         assert_eq!(m.len(), 1, "a gene without a symbol is left out");
-        assert_eq!(m.get("ENSG00000141510").map(AsRef::as_ref), Some("TP53"));
+        assert_eq!(m.get("ENSG00000000001").map(AsRef::as_ref), Some("GENE1"));
     }
 
     #[test]
