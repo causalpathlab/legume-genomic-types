@@ -28,11 +28,13 @@ pub struct PeakCoord {
 }
 
 impl PeakCoord {
-    /// Canonical row key `{chr}_{start}_{end}`: "chr" prefix dropped, case
-    /// kept (`chrX:0-100` becomes `X_0_100`). Every spelling of one locus
-    /// gets the same key, and the key parses back through [`parse_interval`].
+    /// Canonical row key `{chr}:{start}-{end}`: "chr" prefix dropped, case
+    /// kept (`chrX:0-100` becomes `X:0-100`). `chrX:0-100` and `X:0-100` get
+    /// the same key, and the key parses back through [`parse_interval`] to
+    /// the same interval. (It is its own key unless the chromosome, once
+    /// stripped, starts with "chr" again, as in `chrChr1`.)
     pub fn locus_key(&self) -> Box<str> {
-        format!("{}_{}_{}", chr_stripped(&self.chr), self.start, self.end).into_boxed_str()
+        format!("{}:{}-{}", chr_stripped(&self.chr), self.start, self.end).into_boxed_str()
     }
 }
 
@@ -116,51 +118,106 @@ impl GeneAnnotations {
     }
 }
 
-/// The one coordinate grammar: `chr:start-end`, `chr_start_end` or
-/// `chr-start-end`, and (when `allow_position`) a single position `chr:pos` /
-/// `chr_pos` as the one-base interval `[pos, pos + 1)`. Without a `:` the
-/// numbers are read from the right, so contig names that carry `_` or `-`
-/// (`chrUn_CTG1v1_0_100`, `CTG-1_0_100`) keep their full name. The
-/// chromosome comes back as written. `None` when the name is not a
-/// coordinate.
+/// The one coordinate grammar, colon form only: `chr:start-end`, and (when
+/// `allow_position`) a single position `chr:pos` as the one-base interval
+/// `[pos, pos + 1)`. The name holds exactly one `:`, so a pair id like
+/// `chr1:1-2:3-4` is not one locus; the coordinates are plain digits (no
+/// sign) and the name holds no whitespace. Underscore or dash spellings
+/// (`chr1_100_200`, `chr1-100-200`) are not coordinates; see
+/// [`import_interval`]. The chromosome comes back as written. `None` when
+/// the name is not a coordinate.
 fn parse_coordinate(name: &str, allow_position: bool) -> Option<PeakCoord> {
-    let name = name.trim();
-    let num = |s: &str| s.parse::<i64>().ok();
-    let position = |chr, pos: &str| {
-        let pos = num(pos).filter(|_| allow_position)?;
-        Some((chr, pos, pos + 1))
-    };
-    let (chr, start, end) = match name.split_once(':') {
-        Some((chr, rest)) => match rest.split_once(['-', '_']) {
-            Some((s, e)) => (chr, num(s)?, num(e)?),
-            None => position(chr, rest)?,
-        },
-        None => {
-            let mut parts = name.rsplitn(3, ['_', '-']);
-            let (e, s, chr) = (parts.next()?, parts.next(), parts.next());
-            match (chr, s.and_then(num), num(e)) {
-                (Some(chr), Some(s), Some(e)) => (chr, s, e),
-                _ => {
-                    let (chr, pos) = name.rsplit_once('_')?;
-                    position(chr, pos)?
-                }
-            }
-        }
-    };
-    (!chr_stripped(chr).is_empty() && end > start).then(|| PeakCoord {
+    let (chr, start, end) = coordinate_parts(name, allow_position)?;
+    Some(PeakCoord {
         chr: chr.into(),
         start,
         end,
     })
 }
 
-/// Parse one interval name (`chr:start-end`, `chr_start_end`,
-/// `chr-start-end`), the chromosome kept verbatim. Positions are not
-/// intervals; [`parse_region`] reads those, and
+/// [`parse_coordinate`] without allocating: the chromosome borrowed from
+/// `name`.
+fn coordinate_parts(name: &str, allow_position: bool) -> Option<(&str, i64, i64)> {
+    let (chr, range) = name.split_once(':')?;
+    match range.split_once('-') {
+        Some((start, end)) => interval_parts(chr, start, end),
+        None if allow_position => {
+            let pos = plain_number(range)?;
+            interval_parts_num(chr, pos, pos.checked_add(1)?)
+        }
+        None => None,
+    }
+}
+
+/// A chromosome and two coordinate strings checked as one interval.
+fn interval_parts<'a>(chr: &'a str, start: &str, end: &str) -> Option<(&'a str, i64, i64)> {
+    interval_parts_num(chr, plain_number(start)?, plain_number(end)?)
+}
+
+fn interval_parts_num(chr: &str, start: i64, end: i64) -> Option<(&str, i64, i64)> {
+    let chr_ok =
+        !chr_stripped(chr).is_empty() && !chr.contains(|c: char| c == ':' || c.is_whitespace());
+    (chr_ok && end > start).then_some((chr, start, end))
+}
+
+/// A coordinate: plain digits, no sign.
+fn plain_number(s: &str) -> Option<i64> {
+    s.parse::<i64>()
+        .ok()
+        .filter(|_| s.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// [`parse_interval`] without allocating: `(chr, start, end)`, the
+/// chromosome borrowed from `name` as written.
+pub fn split_interval(name: &str) -> Option<(&str, i64, i64)> {
+    coordinate_parts(name, false)
+}
+
+/// True when `name` is a locus, `chr:start-end`; allocates nothing.
+pub fn is_locus(name: &str) -> bool {
+    split_interval(name).is_some()
+}
+
+/// The canonical key of a locus name (see [`PeakCoord::locus_key`]), or
+/// `None` when `name` is not a locus. `chrX:0-100`, `CHRX:0-100` and
+/// `X:0-100` all give `X:0-100`.
+pub fn locus_key(name: &str) -> Option<Box<str>> {
+    parse_interval(name).map(|l| l.locus_key())
+}
+
+/// Parse one interval name, `chr:start-end`, the chromosome kept verbatim.
+/// Positions are not intervals; [`parse_region`] reads those, and
 /// [`crate::variant::parse_locus`] also takes variant ids. `None` when the
 /// name is not an interval.
 pub fn parse_interval(name: &str) -> Option<PeakCoord> {
     parse_coordinate(name, false)
+}
+
+/// Read an interval as an outside tool spells it, for an importer only:
+/// `chr:start-end`, `chr:start_end`, `chr-start-end` or `chr_start_end`
+/// (Signac, some 10x and BED-derived exports). Without a `:` the numbers
+/// are read from the right, so contig names with `_` or `-` stay whole.
+/// The result's `Display` is the colon form every other function here
+/// expects. Call it once, where the names enter, on rows known to be peaks;
+/// a gene id like `GENE_1_2` would read as an interval too.
+pub fn import_interval(name: &str) -> Option<PeakCoord> {
+    let (chr, start, end) = match name.split_once(':') {
+        Some((chr, range)) => {
+            let (start, end) = range.split_once(['-', '_'])?;
+            (chr, start, end)
+        }
+        None => {
+            let mut parts = name.rsplitn(3, ['_', '-']);
+            let (end, start) = (parts.next()?, parts.next()?);
+            (parts.next()?, start, end)
+        }
+    };
+    let (chr, start, end) = interval_parts(chr, start, end)?;
+    Some(PeakCoord {
+        chr: chr.into(),
+        start,
+        end,
+    })
 }
 
 /// [`parse_interval`] over a list of peak names.
@@ -168,11 +225,10 @@ pub fn parse_peak_coordinates(peak_names: &[Box<str>]) -> Vec<Option<PeakCoord>>
     peak_names.iter().map(|name| parse_interval(name)).collect()
 }
 
-/// Parse one genomic region name: an interval `chr:start-end` /
-/// `chr_start_end`, or a single position `chr:pos` / `chr_pos` (a SNP),
-/// which becomes the one-base interval `[pos, pos + 1)`. The `chr` prefix
-/// is dropped so `chr1` and `1` name the same chromosome. `None` when the
-/// name is not a coordinate.
+/// Parse one genomic region name: an interval `chr:start-end`, or a single
+/// position `chr:pos` (a SNP), which becomes the one-base interval
+/// `[pos, pos + 1)`. The `chr` prefix is dropped so `chr1` and `1` name the
+/// same chromosome. `None` when the name is not a coordinate.
 pub fn parse_region(name: &str) -> Option<PeakCoord> {
     let mut r = parse_coordinate(name, true)?;
     r.chr = chr_stripped(&r.chr).into();
@@ -347,53 +403,84 @@ mod tests {
     use super::*;
 
     #[test]
-    fn regions_parse_intervals_and_positions_in_both_spellings_without_the_chr_prefix() {
+    fn regions_parse_intervals_and_positions_without_the_chr_prefix() {
         let r = parse_region("chr1:1000-2000").unwrap();
-        assert_eq!((r.chr.as_ref(), r.start, r.end), ("1", 1000, 2000));
-        let r = parse_region("1_1000_2000").unwrap();
         assert_eq!((r.chr.as_ref(), r.start, r.end), ("1", 1000, 2000));
         let r = parse_region("chrX:5000").unwrap();
         assert_eq!((r.chr.as_ref(), r.start, r.end), ("X", 5000, 5001));
-        let r = parse_region("X_5000").unwrap();
-        assert_eq!((r.chr.as_ref(), r.start, r.end), ("X", 5000, 5001));
-        assert!(parse_region("TP53").is_none());
+        assert!(parse_region("GENE1").is_none());
         assert!(parse_region("chr1:2000-1000").is_none(), "empty interval");
         assert!(parse_region(":1-2").is_none());
         assert_eq!(parse_region("chr2:10-20").unwrap().to_string(), "2:10-20");
     }
 
     #[test]
+    fn only_the_colon_form_is_a_coordinate() {
+        for name in [
+            "1_1000_2000",
+            "chr1_1000_2000",
+            "chr1-1000-2000",
+            "X_5000",
+            "chr1:1000_2000",
+            "chr1:+1000-2000",
+            "chr1:1000-2000 ",
+            " chr1:1000-2000",
+            "chr1:1000-2000:+",
+        ] {
+            assert!(parse_region(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
     fn loci_keep_chromosome_case_and_contig_names() {
         let l = parse_interval("chrX:0-100").unwrap();
         assert_eq!((l.chr.as_ref(), l.start, l.end), ("chrX", 0, 100));
-        assert_eq!(l.locus_key().as_ref(), "X_0_100");
-        for name in ["chrX:0-100", "X_0_100", "chrX-0-100", "CHRX:0_100"] {
+        assert_eq!(l.locus_key().as_ref(), "X:0-100");
+        for name in ["chrX:0-100", "X:0-100", "CHRX:0-100"] {
             assert_eq!(
                 parse_interval(name).unwrap().locus_key().as_ref(),
-                "X_0_100"
+                "X:0-100"
             );
         }
         let l = parse_interval("chrUn_CTG1v1:0-100").unwrap();
         assert_eq!(l.chr.as_ref(), "chrUn_CTG1v1");
-        let l = parse_interval("chr1_CTG2v1_random_5_10").unwrap();
-        assert_eq!(l.chr.as_ref(), "chr1_CTG2v1_random");
+        let l = parse_interval("chrUn_CTG1v1:0-100").unwrap();
         let key = l.locus_key();
-        assert_eq!(key.as_ref(), "1_CTG2v1_random_5_10");
         assert_eq!(
             parse_interval(&key).unwrap().locus_key(),
             key,
             "key round-trips"
         );
-        let r = parse_region("chrUn_CTG1v1_5000").unwrap();
-        assert_eq!((r.chr.as_ref(), r.start), ("Un_CTG1v1", 5000));
+        // Exactly one `:`: a pair id or a name carrying `:` is not one locus.
+        assert!(parse_interval("chr1:100-200:300-400").is_none());
+        assert!(parse_interval("chr1:1-2:chr1:3-4").is_none());
+        assert!(parse_interval("GENE1*01:01:01:5-10").is_none());
+        assert!(
+            parse_region("chr1:9223372036854775807").is_none(),
+            "no overflow"
+        );
         assert!(
             parse_interval("chr1:5000").is_none(),
             "a position is not an interval"
         );
         assert!(parse_interval("ENSG000_GENE1").is_none());
-        assert!(parse_interval("GENE1-AS1").is_none());
+        assert!(parse_interval("GENE_1_2").is_none());
         assert!(parse_interval("GENE1*01:01:01").is_none());
         assert!(parse_interval("chr:1-2").is_none(), "no chromosome left");
+        assert_eq!(locus_key("CHRX:0-100").as_deref(), Some("X:0-100"));
+        assert!(is_locus("X:0-100") && !is_locus("X_0_100"));
+        assert_eq!(split_interval("chrX:0-100"), Some(("chrX", 0, 100)));
+        for name in [
+            "chr1-100-200",
+            "chr1_100_200",
+            "chr1:100-200",
+            "chr1:100_200",
+        ] {
+            assert_eq!(import_interval(name).unwrap().to_string(), "chr1:100-200");
+        }
+        let l = import_interval("chrUn_CTG1v1-5-10").unwrap();
+        assert_eq!(l.to_string(), "chrUn_CTG1v1:5-10");
+        assert!(import_interval("GENE1").is_none());
         assert!(chr_eq("chrX", "X") && chr_eq("cHrX", "X") && !chr_eq("x", "X"));
     }
 
