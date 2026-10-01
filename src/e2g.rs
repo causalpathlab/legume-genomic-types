@@ -185,7 +185,7 @@ mod tests {
             &[
                 ("chromosome".into(), Column::Str(&s(&["17", "17"]))),
                 ("enhancer_id".into(), Column::I32(&[3, 9])),
-                ("target_gene_name".into(), Column::Str(&s(&["", "TP53"]))),
+                ("target_gene_name".into(), Column::Str(&s(&["", "GENE1"]))),
                 (
                     "target_gene_id".into(),
                     Column::Str(&s(&["ENSG1", "ENSG2"])),
@@ -225,7 +225,7 @@ mod tests {
                 (
                     "17".into(),
                     None,
-                    "TP53".into(),
+                    "GENE1".into(),
                     Some(0.25),
                     "scE2G".into(),
                     None

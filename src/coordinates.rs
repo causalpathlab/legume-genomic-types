@@ -545,15 +545,15 @@ chr1\tHAVANA\texon\t100\t150\t.\t+\t.\tgene_id \"ENSG001\"; gene_name \"AAA\"
     #[test]
     fn load_gene_loci_matches_ensg_symbol_compounds() {
         let gtf = "\
-chr1\tHAVANA\tgene\t100\t200\t.\t+\t.\tgene_id \"ENSG00000186092.7\"; gene_name \"OR4F5\"; gene_type \"protein_coding\"
-chr1\tHAVANA\tgene\t400\t600\t.\t-\t.\tgene_id \"ENSG00000237613.2\"; gene_name \"FAM138A\"; gene_type \"protein_coding\"
+chr1\tHAVANA\tgene\t100\t200\t.\t+\t.\tgene_id \"ENSG00000000002.7\"; gene_name \"GENE2\"; gene_type \"protein_coding\"
+chr1\tHAVANA\tgene\t400\t600\t.\t-\t.\tgene_id \"ENSG00000000004.2\"; gene_name \"GENE3\"; gene_type \"protein_coding\"
 ";
         let path = std::env::temp_dir().join(format!("genloci_cmp_{}.gtf", std::process::id()));
         std::fs::write(&path, gtf).unwrap();
         let names: Vec<Box<str>> = vec![
-            "ENSG00000186092_OR4F5".into(),
-            "FAM138A".into(),
-            "ENSG00000237613".into(),
+            "ENSG00000000002_GENE2".into(),
+            "GENE3".into(),
+            "ENSG00000000004".into(),
         ];
         let loci = load_gene_loci(path.to_str().unwrap(), &names).unwrap();
         std::fs::remove_file(&path).ok();
