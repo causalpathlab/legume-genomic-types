@@ -122,7 +122,6 @@ fn is_allele(s: &str) -> bool {
 /// without the `chr` prefix). Alleles must be nucleotide strings; `None`
 /// otherwise, so a name like `chr1_100_200` is not mistaken for one.
 pub fn parse_variant_id(name: &str) -> Option<VariantId> {
-    let name = name.trim();
     let sep = if name.contains(':') { ':' } else { '_' };
     let parts: Vec<&str> = name.split(sep).collect();
     let (chr, pos, r, a, build) = match parts.as_slice() {
