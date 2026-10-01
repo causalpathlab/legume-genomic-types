@@ -660,7 +660,7 @@ mod tests {
             "ENSMUSG00000059552"
         );
         assert_eq!(strip_ensembl_version("TP53"), "TP53");
-        assert_eq!(strip_ensembl_version("HLA-A.1"), "HLA-A.1");
+        assert_eq!(strip_ensembl_version("GENE1-A.1"), "GENE1-A.1");
         assert_eq!(
             strip_ensembl_version("ENST00000269305.9"),
             "ENST00000269305.9"
