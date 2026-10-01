@@ -120,7 +120,7 @@ fn is_allele(s: &str) -> bool {
 
 /// Parse `chr_pos_ref_alt[_b37|_b38]` or `chr:pos:ref:alt` (either with or
 /// without the `chr` prefix). Alleles must be nucleotide strings; `None`
-/// otherwise, so an interval like `chr1_100_200` is not mistaken for one.
+/// otherwise, so a name like `chr1_100_200` is not mistaken for one.
 pub fn parse_variant_id(name: &str) -> Option<VariantId> {
     let name = name.trim();
     let sep = if name.contains(':') { ':' } else { '_' };
@@ -186,12 +186,12 @@ mod tests {
             parse_locus("chr1:100-200").unwrap().to_string(),
             "1:100-200"
         );
-        assert_eq!(
-            parse_locus("chr1_100_200").unwrap().to_string(),
-            "1:100-200"
+        assert!(
+            parse_locus("chr1_100_200").is_none(),
+            "regions are colon form"
         );
         assert_eq!(parse_locus("chr7:55").unwrap().to_string(), "7:55-56");
-        assert!(parse_locus("TP53").is_none());
+        assert!(parse_locus("GENE1").is_none());
     }
 
     #[test]
