@@ -173,6 +173,12 @@ pub fn split_interval(name: &str) -> Option<(&str, i64, i64)> {
     coordinate_parts(name, false)
 }
 
+/// True when `name` is a region [`parse_region`] reads: a locus
+/// `chr:start-end` or a single position `chr:pos`; allocates nothing.
+pub fn is_region(name: &str) -> bool {
+    coordinate_parts(name, true).is_some()
+}
+
 /// True when `name` is a locus, `chr:start-end`; allocates nothing.
 pub fn is_locus(name: &str) -> bool {
     split_interval(name).is_some()
@@ -470,6 +476,8 @@ mod tests {
         assert_eq!(locus_key("CHRX:0-100").as_deref(), Some("X:0-100"));
         assert!(is_locus("X:0-100") && !is_locus("X_0_100"));
         assert_eq!(split_interval("chrX:0-100"), Some(("chrX", 0, 100)));
+        assert!(is_region("chr1_CTG1v1_random:12345") && is_region("X:0-100"));
+        assert!(!is_region("GENE1") && !is_region("chr1_100_200"));
         for name in [
             "chr1-100-200",
             "chr1_100_200",
