@@ -155,13 +155,12 @@ fn interval_parts<'a>(chr: &'a str, start: &str, end: &str) -> Option<(&'a str, 
 }
 
 fn interval_parts_num(chr: &str, start: i64, end: i64) -> Option<(&str, i64, i64)> {
-    let chr_ok =
-        !chr_stripped(chr).is_empty() && !chr.contains(|c: char| c == ':' || c.is_whitespace());
+    let chr_ok = !chr_stripped(chr).is_empty() && !chr.contains(char::is_whitespace);
     (chr_ok && end > start).then_some((chr, start, end))
 }
 
 /// A coordinate: plain digits, no sign.
-fn plain_number(s: &str) -> Option<i64> {
+pub(crate) fn plain_number(s: &str) -> Option<i64> {
     s.parse::<i64>()
         .ok()
         .filter(|_| s.bytes().all(|b| b.is_ascii_digit()))
@@ -450,7 +449,6 @@ mod tests {
         }
         let l = parse_interval("chrUn_CTG1v1:0-100").unwrap();
         assert_eq!(l.chr.as_ref(), "chrUn_CTG1v1");
-        let l = parse_interval("chrUn_CTG1v1:0-100").unwrap();
         let key = l.locus_key();
         assert_eq!(
             parse_interval(&key).unwrap().locus_key(),
