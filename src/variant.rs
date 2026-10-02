@@ -7,7 +7,7 @@
 //! any region / position [`crate::coordinates::parse_region`] reads, so a
 //! column that mixes the two still resolves to coordinates.
 
-use crate::coordinates::{chr_stripped, parse_region, PeakCoord};
+use crate::coordinates::{chr_stripped, parse_region, plain_number, PeakCoord};
 
 /// A reference assembly of the human genome.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -103,7 +103,7 @@ impl VariantId {
         PeakCoord {
             chr: self.chr.clone(),
             start: self.pos,
-            end: self.pos + 1,
+            end: self.pos.saturating_add(1),
         }
     }
 }
@@ -129,10 +129,12 @@ pub fn parse_variant_id(name: &str) -> Option<VariantId> {
         [c, p, r, a, b] if sep == '_' => (*c, *p, *r, *a, Some(GenomeBuild::parse(b)?)),
         _ => return None,
     };
-    if chr.is_empty() || !is_allele(r) || !is_allele(a) {
+    let chr_ok = !chr_stripped(chr).is_empty() && !chr.contains(char::is_whitespace);
+    if !chr_ok || !is_allele(r) || !is_allele(a) {
         return None;
     }
-    let pos: i64 = pos.parse().ok()?;
+    // Plain digits, as in the coordinate grammar, and room for `pos + 1`.
+    let pos = plain_number(pos).filter(|p| p.checked_add(1).is_some())?;
     (pos > 0).then(|| VariantId {
         chr: chr_stripped(chr).into(),
         pos,
@@ -169,6 +171,12 @@ mod tests {
         assert!(parse_variant_id("chr1_100_A_G_b99").is_none());
         assert!(parse_variant_id("rs12345").is_none());
         assert!(parse_variant_id("1:100:A:G:b38").is_none());
+        assert!(parse_variant_id(" 1:100:A:G").is_none(), "no whitespace");
+        assert!(parse_variant_id("1:+100:A:G").is_none(), "no sign");
+        assert!(
+            parse_locus("1:9223372036854775807:A:G").is_none(),
+            "no overflow"
+        );
     }
 
     #[test]
