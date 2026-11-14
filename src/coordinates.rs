@@ -310,7 +310,8 @@ pub fn load_gene_tss(
 ///
 /// Only `gene` features are kept. Each gene is registered under its HGNC
 /// symbol (when present) **and** its version-stripped Ensembl id, so
-/// [`align_gene_loci`] / [`GeneIndexResolver`] can match either form (and
+/// [`align_gene_loci`] / [`legume_numeric::matrix::membership::GeneIndexResolver`]
+/// can match either form (and
 /// compound `ENSG…_SYMBOL` row names).
 pub fn load_gene_loci_map(gff_file: &str) -> anyhow::Result<FxHashMap<Box<str>, GeneLoc>> {
     use crate::gff::{parse_ensembl_id, read_gff_record_vec, FeatureType, GeneId, GeneSymbol};
