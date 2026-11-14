@@ -1,4 +1,4 @@
-//! The E2G enhancer–gene release (`gs://e2g`): normalized parquet tables
+//! The E2G enhancer–gene release: normalized parquet tables
 //! joined back into one enhancer → gene link per prediction.
 //!
 //! The release is a directory of three parts: `cell_types.parquet` (`id`,
@@ -31,7 +31,7 @@ pub struct E2gLink<'a> {
     pub gene: &'a str,
     /// `None` when the score is not a number.
     pub score: Option<f64>,
-    /// `ENCODE-rE2G`, `scE2G`, ….
+    /// The name of the model that made the prediction.
     pub model: &'a str,
     /// The sample's cell type name (`cell_types.parquet` `name`, treatment
     /// included); `None` when the sample id is not listed.
@@ -165,8 +165,8 @@ mod tests {
         write_table(
             &at(CELL_TYPES),
             &[
-                ("id".into(), Column::Str(&s(&["HepG2_A", "HepG2_B"]))),
-                ("name".into(), Column::Str(&s(&["HepG2", "HepG2"]))),
+                ("id".into(), Column::Str(&s(&["CT1_A", "CT1_B"]))),
+                ("name".into(), Column::Str(&s(&["CT1", "CT1"]))),
             ],
         )
         .unwrap();
@@ -191,8 +191,8 @@ mod tests {
                     Column::Str(&s(&["ENSG1", "ENSG2"])),
                 ),
                 ("score".into(), Column::F32(&[0.5, 0.25])),
-                ("model".into(), Column::Str(&s(&["ENCODE-rE2G", "scE2G"]))),
-                ("cell_type_id".into(), Column::Str(&s(&["HepG2_B", "gone"]))),
+                ("model".into(), Column::Str(&s(&["M1", "M2"]))),
+                ("cell_type_id".into(), Column::Str(&s(&["CT1_B", "gone"]))),
             ],
         )
         .unwrap();
@@ -219,15 +219,15 @@ mod tests {
                     Some((100, 201)),
                     "ENSG1".into(),
                     Some(0.5),
-                    "ENCODE-rE2G".into(),
-                    Some("HepG2".into())
+                    "M1".into(),
+                    Some("CT1".into())
                 ),
                 (
                     "17".into(),
                     None,
                     "GENE1".into(),
                     Some(0.25),
-                    "scE2G".into(),
+                    "M2".into(),
                     None
                 ),
             ]
