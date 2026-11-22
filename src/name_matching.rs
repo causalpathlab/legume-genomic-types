@@ -177,7 +177,7 @@ pub struct GeneIndex {
 /// A name's locus part and the rest after it: the whole name when it is a
 /// locus, its `/`-core (`chr1:1-2/count/spliced`), or the locus before an
 /// `id{ROW_SEP}name` join (`chr1:1-2_GENE1`). `None` when no part is a locus.
-fn locus_part(name: &str) -> Option<(&str, &str)> {
+pub fn locus_part(name: &str) -> Option<(&str, &str)> {
     if is_locus(name) {
         return Some((name, ""));
     }
