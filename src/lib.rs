@@ -12,6 +12,7 @@ pub mod bed;
 pub mod coordinates;
 pub mod e2g;
 pub mod gff;
+pub mod name_matching;
 pub mod plink;
 pub mod positions;
 pub mod sam;
