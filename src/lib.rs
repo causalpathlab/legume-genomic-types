@@ -8,6 +8,7 @@
 //! - Variant ids, genome builds and a streaming VCF reader
 //! - The E2G enhancer–gene release (parquet)
 
+pub mod batch_label;
 pub mod bed;
 pub mod cell_cycle;
 pub mod coordinates;
