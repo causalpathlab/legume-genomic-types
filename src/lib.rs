@@ -9,6 +9,7 @@
 //! - The E2G enhancer–gene release (parquet)
 
 pub mod bed;
+pub mod cell_cycle;
 pub mod coordinates;
 pub mod e2g;
 pub mod gff;
