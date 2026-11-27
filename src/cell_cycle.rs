@@ -141,16 +141,13 @@ impl CycleGenes {
     /// each row once, in the list's order.
     #[must_use]
     pub fn matched_rows(&self, index: &GeneIndex, phase: CyclePhase) -> Vec<usize> {
-        let mut rows: Vec<usize> = Vec::new();
-        for g in self.genes.iter().filter(|g| g.phase == phase) {
-            let hit = index
-                .match_gene(&g.symbol)
-                .or_else(|| g.current.as_deref().and_then(|c| index.match_gene(c)));
-            if let Some(r) = hit.filter(|r| !rows.contains(r)) {
-                rows.push(r);
-            }
-        }
-        rows
+        crate::gene_sets::matched_symbols(
+            index,
+            self.genes
+                .iter()
+                .filter(|g| g.phase == phase)
+                .map(|g| (g.symbol.as_ref(), g.current.as_deref())),
+        )
     }
 }
 

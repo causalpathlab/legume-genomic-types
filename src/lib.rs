@@ -12,7 +12,10 @@ pub mod batch_label;
 pub mod bed;
 pub mod cell_cycle;
 pub mod coordinates;
+#[cfg(feature = "covariate")]
+pub mod covariate;
 pub mod e2g;
+pub mod gene_sets;
 pub mod gff;
 pub mod name_matching;
 pub mod plink;
