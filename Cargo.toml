@@ -1,6 +1,6 @@
 [package]
 name = "legume-genomic-types"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2021"
 rust-version = "1.91"
 license = "MIT"
@@ -31,7 +31,7 @@ log = "0.4"
 rustc-hash = "2.1"
 rayon = "1.10.0"
 nalgebra = "0.34"
-legume-numeric = { version = ">=0.10.16, <0.11", default-features = false, features = ["matrix"] }
+legume-numeric = { version = ">=0.10.17, <0.11", default-features = false, features = ["matrix"] }
 # The covariate module (feature `covariate`): its flags, its recorded model,
 # and the count blocks it scores.
 clap = { version = "4", features = ["derive"], optional = true }
@@ -41,3 +41,7 @@ nalgebra-sparse = { version = "0.11", optional = true }
 
 [dev-dependencies]
 tempfile = "3.2"
+
+# Until legume-numeric 0.10.17 is published (removed before this crate is).
+[patch.crates-io]
+legume-numeric = { git = "https://github.com/causalpathlab/legume-numeric", branch = "main" }

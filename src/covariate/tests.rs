@@ -256,3 +256,56 @@ fn an_old_run_replays_without_covariates_and_the_cli_defaults_to_all_and_icl() {
     assert_eq!(cli.c.covariate_criterion, Criterion::Icl);
     assert_eq!(cli.c.covariate_bins_max, 10);
 }
+
+#[test]
+fn scoring_then_binning_is_the_one_call_and_bin_checks_its_cells() -> anyhow::Result<()> {
+    let data = planted(false);
+    let batch: Vec<Box<str>> = vec!["b0".into(); 90];
+    let p = flat_projection(90);
+    let one = model_covariates(&data, &batch, &p, &args(&["cycle"]), None, 16)?.expect("modelled");
+    let scored = || score_covariates(&data, &args(&["cycle"]), None, 16);
+    let s = scored()?.expect("scored");
+    assert_eq!(s.scores.nrows(), 90);
+    let two = s.bin(&batch, &p)?.expect("binned");
+    assert_eq!(one.labels, two.labels);
+    assert_eq!(one.model.rows, two.model.rows);
+    assert!(scored()?.expect("scored").bin(&batch[..10], &p).is_err());
+    assert!(scored()?
+        .expect("scored")
+        .bin(&batch, &flat_projection(10))
+        .is_err());
+    Ok(())
+}
+
+#[test]
+fn a_named_covariate_without_its_genes_is_refused_and_all_scores_nothing() -> anyhow::Result<()> {
+    let data = Mem {
+        x: planted(false).x,
+        names: (0..497).map(|i| format!("G{i}").into_boxed_str()).collect(),
+    };
+    assert!(score_covariates(&data, &args(&["all"]), None, 16)?.is_none());
+    assert!(score_covariates(&data, &args(&["mito"]), None, 16).is_err());
+    Ok(())
+}
+
+#[test]
+fn stale_covariate_files_are_listed_and_cleared() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let prefix = dir.path().join("run").to_string_lossy().into_owned();
+    for p in [
+        files::model(&prefix),
+        files::cells(&prefix),
+        files::batch(&prefix, 0),
+        files::batch(&prefix, 1),
+    ] {
+        std::fs::write(p, "x")?;
+    }
+    assert_eq!(files::all(&prefix).len(), 4);
+    assert_eq!(files::clear_stale(&prefix)?.len(), 4);
+    assert!(files::all(&prefix).is_empty());
+    assert!(files::is_batch(&files::batch(&prefix, 12)));
+    assert!(files::is_batch("run.covariate.batch.0.txt"));
+    assert!(!files::is_batch("run.batch.0.txt"));
+    assert!(!files::is_batch(&files::model(&prefix)));
+    Ok(())
+}

@@ -22,7 +22,7 @@
 mod fit;
 mod outputs;
 
-pub use fit::{model_covariates, CovariateModel, Modelled};
+pub use fit::{model_covariates, score_covariates, CovariateModel, Modelled, Scored};
 pub use outputs::{write_cells, write_covariate_effect};
 
 use crate::batch_label;
@@ -59,6 +59,47 @@ pub mod files {
     #[must_use]
     pub fn batch(prefix: &str, i: usize) -> String {
         format!("{prefix}.covariate.batch.{i}.txt")
+    }
+
+    /// Whether `path` names a covariate batch file ([`batch`]) of any prefix.
+    #[must_use]
+    pub fn is_batch(path: &str) -> bool {
+        let name = std::path::Path::new(path)
+            .file_name()
+            .map_or(path.into(), |n| n.to_string_lossy());
+        name.strip_suffix(".txt")
+            .and_then(|s| s.rsplit_once(".covariate.batch."))
+            .is_some_and(|(_, i)| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+    }
+
+    /// Every covariate file at `prefix` that exists: the model, the cells,
+    /// the effect and the batch files (`0, 1, …` up to the first missing).
+    #[must_use]
+    pub fn all(prefix: &str) -> Vec<String> {
+        let mut out: Vec<String> = [model(prefix), cells(prefix), effect(prefix)]
+            .into_iter()
+            .filter(|p| std::path::Path::new(p).is_file())
+            .collect();
+        out.extend(
+            (0..)
+                .map(|i| batch(prefix, i))
+                .take_while(|p| std::path::Path::new(p).is_file()),
+        );
+        out
+    }
+
+    /// Remove every covariate file at `prefix` ([`all`]), so a fit that
+    /// models none leaves no earlier fit's model to be read as its own;
+    /// returns the files removed.
+    ///
+    /// # Errors
+    /// A file that exists but cannot be removed.
+    pub fn clear_stale(prefix: &str) -> std::io::Result<Vec<String>> {
+        let stale = all(prefix);
+        for p in &stale {
+            std::fs::remove_file(p)?;
+        }
+        Ok(stale)
     }
 }
 
