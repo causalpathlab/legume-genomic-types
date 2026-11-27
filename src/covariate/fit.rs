@@ -44,9 +44,31 @@ pub struct Modelled {
     pub model: CovariateModel,
 }
 
+/// Every cell scored on each covariate set that matched, and what binning
+/// them needs: step one of [`model_covariates`], from
+/// [`score_covariates`]; [`Scored::bin`] is step two. A tool scores first
+/// and makes its projection only when there are scores to bin.
+pub struct Scored {
+    /// Each scored set, by its label, and how (weights by gene name).
+    pub functionals: Vec<Functional>,
+    /// Every cell's scores, cells × functionals.
+    pub scores: DMatrix<f32>,
+    /// Each functional's covariate.
+    pub covariate_of: Vec<Box<str>>,
+    /// The covariates asked for (`all`'s every built-in one).
+    pub chosen: Vec<Box<str>>,
+    /// The names of the rows scored.
+    pub rows: Vec<Box<str>>,
+    /// The binning the flags ask for (`judge` off for covariates named, which
+    /// are binned as given).
+    pub opts: BinOpts,
+}
+
 /// Each cell of `data`'s `batch|cvK` label and the fitted model; `None`
 /// (the reason logged) when nothing is modelled: `none`, no covariate's
 /// genes match, none with groups of its own, or one bin.
+/// [`score_covariates`] then [`Scored::bin`] in one call, for a caller that
+/// has its projection anyway; one that makes it only to bin calls the two.
 ///
 /// - `batch`: each cell's batch, in column order (a label an earlier fit
 ///   made `batch|cvK` counts as its plain batch).
@@ -57,8 +79,7 @@ pub struct Modelled {
 /// - `block`: columns read at a time.
 ///
 /// # Errors
-/// A malformed `--covariate`, an unknown covariate, a gene table or block
-/// that cannot be read, or inputs whose sizes disagree.
+/// As [`score_covariates`] and [`Scored::bin`].
 pub fn model_covariates(
     data: &dyn ColumnBlocks,
     batch: &[Box<str>],
@@ -77,16 +98,35 @@ pub fn model_covariates(
         batch.len(),
         data.n_cols()
     );
+    // Labels that already have parts of their own, checked before the
+    // passes over the data.
+    if plain_or_skip(batch, matches!(selection, Selection::Named(_)))?.is_none() {
+        return Ok(None);
+    }
+    match score_covariates(data, args, scored, block)? {
+        Some(s) => s.bin(batch, proj_kn),
+        None => Ok(None),
+    }
+}
+
+/// Every cell of `data` scored on the chosen covariates' gene sets; `None`
+/// (the reason logged) for `none`, or under `all` when no covariate's genes
+/// match. `scored` and `block` as in [`model_covariates`].
+///
+/// # Errors
+/// A malformed `--covariate`, an unknown covariate or one named whose genes
+/// do not match the features, or a gene table or block that cannot be read.
+pub fn score_covariates(
+    data: &dyn ColumnBlocks,
+    args: &CovariateArgs,
+    scored: Option<&[usize]>,
+    block: usize,
+) -> anyhow::Result<Option<Scored>> {
+    let selection = args.selection()?;
+    if matches!(selection, Selection::None) {
+        return Ok(None);
+    }
     let named = matches!(selection, Selection::Named(_));
-    let batch = match plain_batches(batch) {
-        Ok(b) => b,
-        // Labels that already have parts of their own: `all` leaves them be.
-        Err(e) if !named => {
-            info!("--covariate all: not modelled: {e}");
-            return Ok(None);
-        }
-        Err(e) => return Err(e),
-    };
     let table = gene_sets(args)?;
     let chosen: Vec<&str> = match &selection {
         Selection::Named(names) => {
@@ -117,6 +157,10 @@ pub fn model_covariates(
                 sets.push((s, r));
             }
         } else {
+            anyhow::ensure!(
+                !named,
+                "--covariate {c}: too few of its genes among the features"
+            );
             info!("--covariate: {c} not scored, too few of its genes among the features");
         }
     }
@@ -142,65 +186,103 @@ pub fn model_covariates(
         .collect();
     let functionals = functionals(&set_rows, &names, means.as_deref(), scored, SEED);
     let scores = score(data, &functionals, &lookup, scored, block)?;
-    let covariate_of: Vec<Box<str>> = sets.iter().map(|(s, _)| s.covariate.clone()).collect();
-    let opts = BinOpts {
-        judge: !named,
-        fixed_k: args.covariate_bins,
-        k_max: args.covariate_bins_max,
-        criterion: args.covariate_criterion,
-        seed: SEED,
-        ..BinOpts::default()
-    };
-    let (bin, bins) = match fit_bins(&scores, &covariate_of, &batch, proj_kn, &opts)? {
-        Ok(fit) => fit,
-        Err(why) => {
-            info!("--covariate: not modelled, {why}");
-            return Ok(None);
-        }
-    };
-    if !bins.set_aside.is_empty() {
-        info!(
-            "--covariate all: set aside {} (no groups of their own)",
-            bins.set_aside.join(", ")
-        );
-    }
-
-    let labels: Vec<Box<str>> = batch
-        .iter()
-        .zip(&bin)
-        .map(|(b, &c)| compose(b, c))
-        .collect::<anyhow::Result<_>>()?;
-    let levels = labels.iter().fold(BTreeMap::new(), |mut m, l| {
-        *m.entry(l.clone()).or_default() += 1;
-        m
-    });
-    info!(
-        "--covariate {}: {} bins over {} (own bins by covariate: {:?}; {:?} by k: {:?}); {} cells \
-         kept plain batch labels ({} group(s) at least {:.0}% one bin)",
-        chosen.join(","),
-        bins.mixture.k(),
-        bins.binned
-            .iter()
-            .map(|&j| functionals[j].label.as_ref())
-            .collect::<Vec<_>>()
-            .join(", "),
-        bins.own_k,
-        opts.criterion,
-        bins.bic,
-        bins.plain_cells,
-        bins.one_bin_groups,
-        100.0 * opts.one_bin
-    );
-    Ok(Some(Modelled {
-        labels,
+    Ok(Some(Scored {
+        functionals,
         scores,
-        model: CovariateModel {
-            functionals,
-            bins,
-            levels,
-            rows: rows.iter().map(|&r| names[r].clone()).collect(),
+        covariate_of: sets.iter().map(|(s, _)| s.covariate.clone()).collect(),
+        chosen: chosen.iter().map(|&c| c.into()).collect(),
+        rows: rows.iter().map(|&r| names[r].clone()).collect(),
+        opts: BinOpts {
+            judge: !named,
+            fixed_k: args.covariate_bins,
+            k_max: args.covariate_bins_max,
+            criterion: args.covariate_criterion,
+            seed: SEED,
+            ..BinOpts::default()
         },
     }))
+}
+
+impl Scored {
+    /// The scored cells binned: each cell's `batch|cvK` label and the
+    /// fitted model; `None` (the reason logged) when no covariate has groups
+    /// of its own or one bin is chosen, or under `all` when the batch labels
+    /// already have parts of their own. `batch` and `proj_kn` as in
+    /// [`model_covariates`], for the same cells in the same order as scored
+    /// (they may be made after scoring, under the final batch labels).
+    ///
+    /// # Errors
+    /// `batch` or `proj_kn` not one per scored cell, a named covariate with
+    /// batch labels that already have parts, or a projection the groups of
+    /// like cells cannot be made from.
+    pub fn bin(
+        self,
+        batch: &[Box<str>],
+        proj_kn: &DMatrix<f32>,
+    ) -> anyhow::Result<Option<Modelled>> {
+        let n = self.scores.nrows();
+        anyhow::ensure!(
+            batch.len() == n && proj_kn.ncols() == n,
+            "--covariate: {} batch labels and a projection of {} cells for {n} scored cells",
+            batch.len(),
+            proj_kn.ncols()
+        );
+        let Some(batch) = plain_or_skip(batch, !self.opts.judge)? else {
+            return Ok(None);
+        };
+        let opts = &self.opts;
+        let (bin, bins) = match fit_bins(&self.scores, &self.covariate_of, &batch, proj_kn, opts)? {
+            Ok(fit) => fit,
+            Err(why) => {
+                info!("--covariate: not modelled, {why}");
+                return Ok(None);
+            }
+        };
+        if !bins.set_aside.is_empty() {
+            info!(
+                "--covariate all: set aside {} (no groups of their own)",
+                bins.set_aside.join(", ")
+            );
+        }
+        let labels: Vec<Box<str>> = batch
+            .iter()
+            .zip(&bin)
+            .map(|(b, &c)| compose(b, c))
+            .collect::<anyhow::Result<_>>()?;
+        let levels = labels.iter().fold(BTreeMap::new(), |mut m, l| {
+            *m.entry(l.clone()).or_default() += 1;
+            m
+        });
+        info!(
+            "--covariate {}: {} bins over {} (own bins by covariate: {:?}; {:?} by k: {:?}); {} \
+             cells kept plain batch labels ({} group(s) at least {:.0}% one bin; {} of their \
+             cells rejoined a bin, their batch having too few to keep apart)",
+            self.chosen.join(","),
+            bins.mixture.k(),
+            bins.binned
+                .iter()
+                .map(|&j| self.functionals[j].label.as_ref())
+                .collect::<Vec<_>>()
+                .join(", "),
+            bins.own_k,
+            opts.criterion,
+            bins.bic,
+            bins.plain_cells,
+            bins.one_bin_groups,
+            100.0 * opts.one_bin,
+            bins.rejoined
+        );
+        Ok(Some(Modelled {
+            labels,
+            scores: self.scores,
+            model: CovariateModel {
+                functionals: self.functionals,
+                bins,
+                levels,
+                rows: self.rows,
+            },
+        }))
+    }
 }
 
 impl CovariateModel {
@@ -287,6 +369,22 @@ fn matched(set: &GeneSet, index: &GeneIndex) -> Option<Vec<usize>> {
     let rows = set.matched_rows(index);
     let need = MIN_MATCHED.min(set.genes.len().div_ceil(2)).max(1);
     (rows.len() >= need).then_some(rows)
+}
+
+/// `batch` without an earlier fit's covariate axis, or `None` (logged) under
+/// `all` when a label already has other parts, which `all` leaves be.
+///
+/// # Errors
+/// Such a label when the covariates were `named`.
+fn plain_or_skip(batch: &[Box<str>], named: bool) -> anyhow::Result<Option<Vec<Box<str>>>> {
+    match plain_batches(batch) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if !named => {
+            info!("--covariate all: not modelled: {e}");
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Each label without the covariate axis an earlier fit gave it, each
